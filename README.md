@@ -51,20 +51,79 @@ A *pypi* package has not yet been compiled, so instead either clone this reposit
 ```pip install git+https://github.com/AdamantLife/Gwern2DeepDanbooru```
 
 ## Basic Usage
-While Gwern2DeepDanbooru offers a variety of methods, the baseline usage can be achieved very simply via the commandline:
+*(Remember to always maintain a backup of your data in case you wish to use the Gwern data in its original format)*
+
+While Gwern2DeepDanbooru offers a variety of methods, the baseline usage can be achieved via the simple commandline:
 ```
 cd {gwern data location}
-python Gwern2DeepDanbooru run
+python -m Gwern2DeepDanbooru run
 ```
 
 This command will:
 * create a new directory called ```Project/``` in the current work directory
 * compile all metadata into a single, valid json file
 * move all images (which have metadata available) within this directory to the appropriate subdirectory in ```Project/Images/```
-* create ```Project/project.sqlite3```
-* and populate the database with the required data to train DeepDanbooru.
+* create ```Project/project.sqlite3``` and ```Project/tags.txt```
+* populate the database and text file with the required data to train DeepDanbooru.
 
-*(Remember to always maintain a backup of your data in case you wish to use the Gwern data in its original format)*
+#### Alternative Usage
+The result of this method is virtually equivalent to the above commandline, but its behavior can be modified. It also takes longer to complete and requires more resources.
+```python
+from Gwern2DeepDanbooru import G2DD
+
+g2dd = G2DD()
+
+## Locates all available Gwern resources and creates the base structure for a DeepDanbooru project
+g2dd.initialize__directories()
+
+## Combines all metadata files into a file called "allmetadata.json" in the same directory
+## as the metadata, strips out information not used by DeepDanbooru, and removes the metadata
+## for missing images
+g2dd.create_allmetadata_minimal()
+
+## Removes images which do not have corresponding metadata
+g2dd.clean_images()
+
+## Performs the following modifications to the dataset:
+##      Updates allmetadata.json with the correct file extension (Gwern converts all images to .jpg)
+##      Updates allmetadata.json with the correct md5 hash (in case the md5 hash was incorrect)
+##      If a hash collision occurs (two images with the same md5 hash) checks if the images are
+##          actually identical: if so, combines the tags from both images and removes the subsequently
+##          found image
+##      Checks if the image is completely blank: if so, removes it
+## The last two points can be modified with the appropriate arguments: consult the docs for more information
+g2dd.gwern.prepare_images_for_project()
+
+## Creates the DeepDanbooru Project by adding allmetadata to Project/project.sqlite3 and moving all
+## images in allmetadata.json to their appropriate folder in Project/images/
+g2dd.create_project()
+```
+
+## Additional Information
+#### Tags Table
+Gwern2DeepDanbooru offers a number of other utilities for working with the dataset. One important
+utility to be aware of is the **tags** table created in ```Project/project.sqlite3```: this
+table records all tags added to the posts in the database via methods in ```Gwern2DeepDanbooru.project```
+(which are also used by G2DD instance) and is used to make some tag querying methods faster. If you
+modify the *tag_string* column of **posts** manually, you'll want to use
+```Gwern2DeepDanbooru.project.sync_tags(database, postid)``` to make sure that it is updated.
+
+#### Test Set
+A relatively small Test Set can be found [here on Google Drive][1]. It is Gwern-formatted and
+contains the following:
+* 1004 semi-random images:
+  * The images are organized across 10 directories
+  * 1 of the images does not have metadata which should be ignored by most cleaning operations
+  * 1 is a blank image which should be ignored on cleaning operations that include the ignore_blanks
+argument
+  * and 2 of which are the same image which should have their tags combined for operations that support
+that operation
+* There are 1503 metadata dicts:
+  * the 1003 images that have metadata
+  * and 500 additional dicts which do not have an associated image and should be ignored by many operations
+
+[1]:https://drive.google.com/file/d/1mYjPCxcwtGV4c3DI6er-U1_Fwf4H2K1N/view?usp=sharing
+
 
 ## Documentation
 TODO

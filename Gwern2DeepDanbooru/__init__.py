@@ -18,6 +18,7 @@
 
 import json
 import pathlib
+import PIL.Image
 import shutil
 import sqlite3
 from typing import Union
@@ -45,20 +46,14 @@ class G2DD():
                  gwern_image_dir: Union[str,pathlib.Path] = None, gwern_meta_dir: Union[str,pathlib.Path] = None,
                  project_dir: Union[str,pathlib.Path] = None):
         """ Initialize a new G2DD runtime environment. """
-        self.directories = Directories(root = dict(value = root_dir, default = pathlib.Path.cwd),
-                                       gwern_image = dict(value = gwern_image_dir),
-                                       gwern_meta = dict(value = gwern_meta_dir),
-                                       gwern_allmeta = dict(default = lambda: (self.directories.gwern_meta / GWERNMETAALL).resolve() if self.directories.gwern_meta else None),
-                                       project = dict(value = project_dir, default= lambda: (self.directories.root / "Project"), not_exists = lambda path: path.mkdir() ),
-                                       project_image = dict(default = lambda: (self.directories.project / "images"), not_exists = lambda path: path.mkdir() )
-                                       )
-        self.gwern = gwern.Dataset(self.directories)
-        self.project = project.Project(self.directories)
+        self.directories = utils.Directories(root = dict(value = root_dir, default = pathlib.Path.cwd))
+        self.gwern = gwern.Dataset(self.directories, gwern_image_dir = gwern_image_dir, gwern_meta_dir = gwern_meta_dir)
+        self.project = project.Project(self.directories, project_dir = project_dir)
 
     def initialize_directories(self):
         """ Convenience function to locate both gwern_image and gwern_data, and create project and project_image if they do not already exist. """
-        self.gwern.locate_image_dir()
-        self.gwern.locate_meta_dir()
+        self.gwern.locate_gwern_image_dir()
+        self.gwern.locate_gwern_meta_dir()
         self.directories.project
         self.directories.project_image
 
@@ -82,7 +77,7 @@ class G2DD():
             try:
                 if (location := self.project.locate_image(metadata)):
                     return location
-                except FileNotFoundError: pass
+            except FileNotFoundError: pass
 
     def clean_images(self):
         """ Removes any image from self.directories.gwern_image and self.directories.project_image that do not have
@@ -99,7 +94,7 @@ class G2DD():
         """
         find_methods = []
         db = None
-        try: db = self.load_projectdb()
+        try: db = self.project.load_projectdb()
         except FileNotFoundError: pass
         else: find_methods.append(lambda image: self.project.get_image_metadata(image, db= db))
 
@@ -113,7 +108,7 @@ class G2DD():
         dirs = []
         if (gwern_image := self.directories.gwern_image) and gwern_image.exists():
             dirs.append(gwern_image)
-        if (project_image := slef.directories.project_image) and project_image.exists():
+        if (project_image := self.directories.project_image) and project_image.exists():
             dirs.append(project_image)
 
         if not dirs:
@@ -139,7 +134,7 @@ class G2DD():
         allmetadata, db = {}, None
         try: allmetadata = self.load_allmetadata()
         except FileNotFoundError: pass
-        try: db = self.load_projectdb()
+        try: db = self.project.load_projectdb()
         except FileNotFoundError: pass
 
         try: gwern_images = self.gwern.iter_images()
@@ -204,6 +199,8 @@ class G2DD():
         if search_func is None: search_func = self.locate_image
         self.gwern.clean_allmetadata(search_func = search_func)
 
+
+
     def initialize_project_database(self):
         """ Calls self.project.initialize_project_database. """
         self.project.initialize_project_database()
@@ -222,6 +219,7 @@ class G2DD():
         """
         self.create_project_database()
         self.move_gwern_images_to_project(move = move)
+        self.project.create_tags_file()
 
     def create_project_database(self):
         """ Converts allmetadata.json into a Project database for DeepDanbooru
@@ -232,7 +230,7 @@ class G2DD():
         """
         allmeta = self.load_allmetadata(returntype = "list")
         self.initialize_project_database()
-        db = self.load_projectdb()
+        db = self.project.load_projectdb()
         project.add_metadata_to_database(db, *allmeta)
         db.commit()
         db.close()
@@ -242,6 +240,7 @@ class G2DD():
 
             Images are renamed from the gwern format (id-based) to the DeepDanbooru format (md5-based).
             If move if False, images are copied instead of moved.
+            Images should have their md5 hash updated before hand.
             Only images that are contained in allmetadata will be moved.
             If self.directories.gwern_image does not exist, a FileNotFoundError will be raised.
 
@@ -263,16 +262,25 @@ class G2DD():
                 if move: image.rename(target)
                 else: shutil.copy(image, target)
 
-    def create_project_immediate(self):
+    def create_project_immediate(self, ignore_blanks = True, combine_duplicates = True):
         """ Creates a DeepDanbooru Project from a Gwern-formatted Dataset without any intermediate steps.
 
             This method, like create_allmetadata_minimal, is more resource efficient than performing
             the intermediate steps individually, though obviously it does not allow for any extra
             preprocessing not already implemented.
+
+            :param ignore_blanks: Whether or not to include blank (counterproductive) images, defaults to True.
+                                    If False, subsequent metadata will be discarded.
+            :param type: bool
+
+            :param combine_duplicates: If two images are identical, combine their tags, defaults to True
+            :param type: bool
         """
-        self.intialize_directories()
+        self.initialize_directories()
         self.initialize_project_database()
-        db = self.load_projectdb()
+        db = self.project.load_projectdb()
+
+        project_image = self.directories.project_image
 
         ## Adapted from create_allmetadata_minimal
         for file in gwern.iter_meta(self.directories.gwern_meta):
@@ -283,15 +291,38 @@ class G2DD():
                     ## Minimize metadata
                     meta = utils.filtermeta(json.loads(line))
                     ## Clean metadata
-                    if not (image := self.gwern.locate_image(meta)): continue
+                    if not (imagepath := self.gwern.locate_image(meta)): continue
+                    ## Load image
+                    image = PIL.Image.open(imagepath)
+                    ## Check blank
+                    if ignore_blanks and utils.is_blank_image(image):
+                        continue
                     ## Update md5
                     meta['md5'] = utils.calculate_md5(image)
 
                     ## Move image
-                    image.rename(utils.get_image_path(meta, project_image, mode = "deepdanbooru"))
+                    target = utils.get_image_path(meta, project_image, mode = "deepdanbooru")
+                    ## Duplicate md5
+                    update_duplicate = False
+                    if target.exists():
+                        ## Duplicate Image and updating meta
+                        if combine_duplicates and utils.is_same_image(image, target):
+                            update_duplicate = True
+                        ## Discard if not Duplicate or not updating meta
+                        else: continue
+                    if not update_duplicate:
+                        target.parent.mkdir(exist_ok = True)
+                        imagepath.rename(target)
 
-                    ## Save image metadata
-                    project.add_metadata_to_database(db, meta)
+                        ## Save image metadata
+                        project.add_metadata_to_database(db, meta)
+                    else:
+                        projectmeta = self.project.get_metadata_by_md5(meta['md5'], db = db)
+                        tags = projectmeta['tag_string'].split()
+                        tags += [tag['name'] for tag in meta['tags']]
+                        tag_string = " ".join(sorted(set(tags)))
+                        project.update_metadata(db, meta['md5'], tag_string = tag_string)
 
         db.commit()
         db.close()
+        self.project.create_tags_file()

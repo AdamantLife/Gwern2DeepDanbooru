@@ -1,7 +1,11 @@
+Test Set.zip
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+
+# "Invisible" dirs
+.*/
 
 # C extensions
 *.so

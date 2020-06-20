@@ -38,5 +38,12 @@ class DirectoriesTest(unittest.TestCase):
         self.assertRaises(AttributeError,lambda: d.foobar)
         self.assertRaises(AttributeError,lambda: d['foobar'])
 
+    def test_is_directory(self):
+        """ Tests that the is_directories method works """
+        d = Directories()
+        self.assertFalse(d.is_directory("foobar"))
+        d.add_directory("foobar")
+        self.assertTrue(d.is_directory("foobar"))
+
 if __name__ == "__main__":
     unittest.main()
