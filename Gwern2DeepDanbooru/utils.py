@@ -7,6 +7,8 @@
 import hashlib
 import pathlib
 import PIL.Image
+from PIL import ImageChops
+from Gwern2DeepDanbooru.constants import *
 
 class Directories():
     """ Helper class for managing directories
@@ -71,6 +73,19 @@ class Directories():
             raise ValueError(f"'{value}' does not appear to be callable")
         self._items[dire]["not_exists"] = value
 
+    def is_directory(self, name):
+        """ Simple function to check if directory name is registered
+        
+            :param name: The directory name to check for
+            :type name: str
+
+            :returns: Whether the directory is registered
+            :rtype: bool
+        """
+        try: self.name
+        except AttributeError: return False
+        return True
+
     def __getitem__(self,name):
         return self.__getattr__(name)
 
@@ -108,6 +123,19 @@ class Directories():
             super().__setattr__(name,value)
             return
         self[name] = value
+
+class DBContext():
+    """ Provides context support to the Project to streamline opening and closing the database. """
+    def __init__(self, db_connect_method):
+        self.db_connect_method = db_connect_method
+        self.db = None
+
+    def __enter__(self):
+        self.db = self.db_connect_method()
+        return self.db
+
+    def __exit__(self, *exc):
+        self.db.close()
 
 def get_image_path(metadata, root, mode = "gwern"):
     """ Returns the expected file location for the given metadata based on what format is requested.
@@ -163,9 +191,50 @@ def iter_images(image_dir):
 def calculate_md5(image):
     """ Calculates the md5 of the image. This is useful because (as noted by Gwern) sometimes Danbooru's md5 hash is incorrect. 
     
-        :param image: the path to the Image to be hashed.
-        :type image: Union[str, pathlib.Path]
-    """
+        :param image: The Image to be hashed, or the path to the Image.
+        :type image: Union[PIL.Image, str, pathlib.Path]
 
-    imgbytes = PIL.Image.open(image).tobytes()
+        :return: The md5 hash
+    """
+    if isinstance(image, (str, pathlib.Path)):
+        image = PIL.Image.open(image)
+    imgbytes = image.tobytes()
     return hashlib.md5(imgbytes).hexdigest()
+
+def is_blank_image(image):
+    """ Returns whether the image is blank or not (a solid color; may occur for a number of reasons)
+    
+        :param image: The Image to check, or the path to the Image
+        :type image: Union[PIL.Image, str, pathlib.Path]
+
+        :return: Whether the image is blank
+        :return type: bool
+    """
+    if isinstance(image, (str, pathlib.Path)):
+        image = PIL.Image.open(image)
+
+    ## Convert to Monochrome and lightest and darkest colors
+    extreme = image.convert("L").getextrema()
+    return extreme[0] == extreme[1]
+
+def is_same_image(img1, img2):
+    """ Checks if two images are duplicates. 
+
+        :param img1: An Image or path to an Image
+        :type img1: Union[PIL.Image, str, pathlib.Path]
+
+        :param img2: An Image or path to an Image
+        :type img2: Union[PIL.Image, str, pathlib.Path]
+
+        :return: Whether the images are identical
+        :return type: bool
+    """
+    if isinstance(img1, (str, pathlib.Path)):
+        img1 = PIL.Image.open(img1)
+
+    if isinstance(img2, (str, pathlib.Path)):
+        img2 = PIL.Image.open(img2)
+
+    return bool(ImageChops.difference(img1, img2).getbbox())
+
+
