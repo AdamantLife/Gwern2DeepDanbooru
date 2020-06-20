@@ -56,7 +56,7 @@ A *pypi* package has not yet been compiled, so instead either clone this reposit
 While Gwern2DeepDanbooru offers a variety of methods, the baseline usage can be achieved via the simple commandline:
 ```
 cd {gwern data location}
-python Gwern2DeepDanbooru run
+python -m Gwern2DeepDanbooru run
 ```
 
 This command will:
@@ -100,12 +100,30 @@ g2dd.create_project()
 ```
 
 ## Additional Information
+#### Tags Table
 Gwern2DeepDanbooru offers a number of other utilities for working with the dataset. One important
 utility to be aware of is the **tags** table created in ```Project/project.sqlite3```: this
 table records all tags added to the posts in the database via methods in ```Gwern2DeepDanbooru.project```
 (which are also used by G2DD instance) and is used to make some tag querying methods faster. If you
 modify the *tag_string* column of **posts** manually, you'll want to use
 ```Gwern2DeepDanbooru.project.sync_tags(database, postid)``` to make sure that it is updated.
+
+#### Test Set
+A relatively small Test Set can be found [here on Google Drive][1]. It is Gwern-formatted and
+contains the following:
+* 1004 semi-random images:
+  * The images are organized across 10 directories
+  * 1 of the images does not have metadata which should be ignored by most cleaning operations
+  * 1 is a blank image which should be ignored on cleaning operations that include the ignore_blanks
+argument
+  * and 2 of which are the same image which should have their tags combined for operations that support
+that operation
+* There are 1503 metadata dicts:
+  * the 1003 images that have metadata
+  * and 500 additional dicts which do not have an associated image and should be ignored by many operations
+
+[1]:https://drive.google.com/file/d/1mYjPCxcwtGV4c3DI6er-U1_Fwf4H2K1N/view?usp=sharing
+
 
 ## Documentation
 TODO
