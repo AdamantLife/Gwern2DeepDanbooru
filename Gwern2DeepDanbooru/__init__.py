@@ -161,6 +161,7 @@ class G2DD():
                 if db:
                     metadata = self.project.get_metadata_by_md5(md5, db = db)
                     if not metadata: continue
+                    metadata = metadata[0]
                     self.project.update_metadata(md5, file_ext = ext, database = db)
                     _id = metadata.get("id")
                 if _id and _id in allmetadata:
@@ -262,7 +263,7 @@ class G2DD():
                 if move: image.rename(target)
                 else: shutil.copy(image, target)
 
-    def create_project_immediate(self, ignore_blanks = True, combine_duplicates = True):
+    def create_project_immediate(self, ignore_blanks = True, combine_duplicates = True, commit_batch = 1000):
         """ Creates a DeepDanbooru Project from a Gwern-formatted Dataset without any intermediate steps.
 
             This method, like create_allmetadata_minimal, is more resource efficient than performing
@@ -275,12 +276,21 @@ class G2DD():
 
             :param combine_duplicates: If two images are identical, combine their tags, defaults to True
             :param type: bool
+
+            :param commit_batch: Number of database operations to perform before commiting, defaults to 1000.
+                                    If commit_batch is not a positive integer, no commits will be made until the very end.
+            :param type: int
         """
         self.initialize_directories()
         self.initialize_project_database()
         db = self.project.load_projectdb()
 
         project_image = self.directories.project_image
+
+        ## This method now only commits every commit_batch
+        commit_counter = 0
+        if not isinstance(commit_batch, int):
+            raise TypeError("commit_batch must be an integer")
 
         ## Adapted from create_allmetadata_minimal
         for file in gwern.iter_meta(self.directories.gwern_meta):
@@ -315,14 +325,24 @@ class G2DD():
                         imagepath.rename(target)
 
                         ## Save image metadata
-                        project.add_metadata_to_database(db, meta)
+                        project.add_metadata_to_database(db, meta, update_tags = False)
                     else:
-                        projectmeta = self.project.get_metadata_by_md5(meta['md5'], db = db)
+                        projectmeta = self.project.get_metadata_by_md5(meta['md5'], db = db)[0]
                         tags = projectmeta['tag_string'].split()
                         tags += [tag['name'] for tag in meta['tags']]
                         tag_string = " ".join(sorted(set(tags)))
-                        project.update_metadata(db, meta['md5'], tag_string = tag_string)
+                        project.update_metadata(db, meta['md5'], tag_string = tag_string, update_tags = False)
 
+                    ## commit_batch <= 0 means do not commit until the end
+                    if commit_batch > 0:
+                        ## Data has been added to the db
+                        commit_counter+= 1
+                        ## If we have reached the batch limit for commits
+                        if commit_counter >= commit_batch:
+                            db.commit()
+                            commit_counter = 0
+
+        ## One final commit
         db.commit()
         db.close()
         self.project.create_tags_file()

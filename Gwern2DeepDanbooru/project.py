@@ -5,6 +5,7 @@
 """
 from Gwern2DeepDanbooru.constants import *
 from Gwern2DeepDanbooru.utils import Directories, DBContext
+import csv
 import pathlib
 import sqlite3
 
@@ -63,24 +64,35 @@ class Project():
             if not_supplied: db.close()
         return result
 
-    def get_metadata_by_md5(self, md5, db = None):
+    def get_metadata_by_md5(self, md5, rowid = False, db = None):
         """ Get image metadata bsed on the image's md5 hash.
 
             If db is not provided, self.load_projectdb will be used.
 
             :param md5: the md5 to query for
             :type md5: str
+
+            :param rowid: Also return the rowid, default False. Useful when dealing with duplicates.
+            :type rowid: bool
+
+            :param db: The database to query in, defaults to the return of self.load_projectdb.
+            :type db: sqlite3.Connection, optional
+
+            :return: A list of sqlite3.Row objects (or the current row_factory)
+            :rtype: list
         """
+        rowid_string = ""
+        if rowid: rowd_string = ", rowid"
         if (not_supplied := db is None):
             db = self.load_projectdb()
         try:
-            result = db.execute("""SELECT * FROM posts WHERE md5=:md5;""", dict(md5 = md5)).fetchone()
+            results = db.execute(f"""SELECT *{rowid_string} FROM posts WHERE md5=:md5;""", dict(md5 = md5)).fetchall()
         finally:
             if not_supplied:
                 db.close()
-        return result
+        return results
 
-    def get_metadata_by_id(self, _id, db = None):
+    def get_metadata_by_id(self, _id, , rowid = False, db = None):
         """ Get image metadata based on the image's id.
 
             Useful for iteraopability with gwern images.
@@ -89,11 +101,19 @@ class Project():
             :param _id: The id to query for.
             :type _id: int
 
+            :param rowid: Also return the rowid, default False. Useful when dealing with duplicates.
+            :type rowid: bool
+
             :param db: The database to query in, defaults to the return of self.load_projectdb.
             :type db: sqlite3.Connection, optional
+                        
+            :return: A list of sqlite3.Row objects (or the current row_factory)
+            :rtype: list
         """
+        rowid_string = ""
+        if rowid: rowd_string = ", rowid"
         if not db: db = self.load_projectdb()
-        return db.execute("""SELECT * FROM posts WHERE id=:id;""", dict(id = _id)).fetchone()
+        return db.execute(f"""SELECT *{rowid_string} FROM posts WHERE id=:id;""", dict(id = _id)).fetchone()
 
     def update_metadata(self, md5, database = None, **metadata):
         """ Calls update_metadata using self.load_projectdb for the database to update any amount of metadata for a single image.
@@ -176,7 +196,7 @@ class Project():
 
         db = self.load_projectdb()
         try:
-            tags = get_tag_list(db)
+            tags = get_tags_dict(db)
             if limit:
                 tags = [tag for tag,count in tags.items() if count >= limit]
             else:
@@ -186,6 +206,21 @@ class Project():
                 f.write("\n".join(tags))
         finally:
             db.close()
+
+    def output_tags_count(self, file = None):
+        """ Outputs all tags with their count as a csv file (useful for determining the limit for creating the tags file)
+
+            :param file: The filename to output to, defaults to None. If not supplied "tag_count.csv" will be used.
+            :type file: Union[str, pathlib.Path]
+        """
+        db = self.load_projectdb()
+        try:tags = [{"tag":k, "count":v} for k,v in get_tags_dict(db).items()]
+        finally: db.close()
+        if not file: file = "tag_count.csv"
+        with open(file, 'w', newline = "") as f:
+            writer = csv.DictWriter(f, fieldnames = ["tag", "count"])
+            writer.writeheader()
+            writer.writerows(tags)
 
     def iter_metadata(self):
         """ A generator to iterate over the metadata stored in the posts table """
@@ -216,25 +251,17 @@ def drop_tags(database):
 def create_posts(database):
     """ Creates the posts table for a DeepDanbooru Project database.
     
-        There are two differences of note between this method and the Project database
-        expected by DeepDanbooru.
-
-        First, md5 is defined as an unique field- this is because images used in the
-        database will be saved using their md5 hash and should therefore be unique by
-        nature. By formalizing the column's uniqueness, the database avoids inserting
-        duplicate images and is more reliably updated if metadata changes.
-        
-        Secondly, the table created by this module includes rating, score, and is_deleted
-        columns: at the moment, DeepDanbooru only makes provisions for those columns in its
-        code and does not actually create those columns itself. This module includes them as
-        a form of future-proofing.
+        Unlike the formal table declaration by DeepDanbooru, the table created by this module
+        includes rating, score, and is_deleted columns: at the moment, DeepDanbooru only makes
+        provisions for those columns in its code and does not actually create those columns
+        itself. This module includes them as a form of future-proofing.
 
         :param database: The database to create the table in. The posts table should not already exist (call drop_posts() if necessary).
         :type database: sqlite3.Connection
     """
     database.execute("""CREATE TABLE posts (
 id INTEGER,
-md5 TEXT UNIQUE,
+md5 TEXT,
 file_ext TEXT,
 tag_string TEXT,
 tag_count_general INTEGER,
@@ -254,11 +281,12 @@ def create_tags(database):
     """
     database.execute("""CREATE TABLE tags (
     md5 TEXT REFERENCES posts(md5),
-    tag TEXT NOT NULL
+    tag TEXT NOT NULL,
+    UNIQUE (md5, tag) ON CONFLICT IGNORE
 );""")
 
 
-def add_metadata_to_database(database, *metadata, update = True):
+def add_metadata_to_database(database, *metadata, update = True, update_tags = True):
     """ Adds the provided metadata to the database. If the md5 for the metadata exists, updates the metadata instead.
     
         :param metadata: metadata to update or into the database
@@ -269,6 +297,9 @@ def add_metadata_to_database(database, *metadata, update = True):
 
         :param update: Whether to upsert or insert only, default True (update and insert)
         :type update: bool
+
+        :param update_tags: Whether to update the tags table, defaults to True (perform update)
+        :type update_tags: bool
 
         :raises AttributeError: if any metadata dict does not contain an md5 key.
     """
@@ -292,10 +323,10 @@ def add_metadata_to_database(database, *metadata, update = True):
         data["tag_count_general"] = len(tags)
         database.execute(cmd, data)
         remove_tags(database,data['md5'])
-        update_tags(database, data['md5'], data['tag_string'].split())
-    database.commit();
+        if update_tags:
+            update_tags(database, data['md5'], data['tag_string'].split())
 
-def update_metadata(database, md5, **metadata):
+def update_metadata(database, md5, update_tags = True, **metadata):
     """ An alternative to add_metadata_to_database which allows for a selective amount of metadata to be updated.
 
 
@@ -304,6 +335,9 @@ def update_metadata(database, md5, **metadata):
 
         :param md5: The md5 of the image to update
         :type md5: str
+
+        :param update_tags: Whether to update the tags table, defaults to True (perform update)
+        :type update_tags: bool
 
         :param **metadata: Valid metadata values to update.
     """
@@ -322,12 +356,12 @@ def update_metadata(database, md5, **metadata):
 
     database.execute(f"""UPDATE posts SET {updatestr} WHERE md5=:md5;""", substitutes)
 
-    if "tag_string" in metadata:
+    if "tag_string" in metadata and update_tags:
         remove_tags(database,md5)
         update_tags(database, md5, metadata['tag_string'].split())
 
 
-def get_tag_list(database):
+def get_tags_dict(database):
     """ Returns a dict where the keys are tags and the value is the number of images which contain those tags """
     tags = database.execute("""SELECT tag, COUNT(md5) AS "count"
         FROM tags
@@ -349,4 +383,16 @@ def update_tags(database, md5, tags):
     tag_inserts = ",".join(f"(:md5, :{tagnumber})" for tagnumber in tag_substitute)
     tag_substitute["md5"] = md5
     database.execute(f"""INSERT INTO tags (md5, tag) VALUES {tag_inserts};""", tag_substitute)
-    database.commit()
+
+def find_duplicate_images(database):
+    """ A method to locate duplicate image in the posts Table. Returns a list of md5 hashes.
+
+
+        :param database: The database to inspect for duplicates
+        :type database: sqlite3.Connection
+
+        :returns: A list of md5 hashes
+        :rtype: list
+    """
+    results = database.execute("""SELECT md5, COUNT(*) c FROM posts GROUP BY md5 having c > 1;""").fetchall()
+    return [row['md5'] for row in results]
