@@ -92,7 +92,7 @@ class Project():
                 db.close()
         return results
 
-    def get_metadata_by_id(self, _id, , rowid = False, db = None):
+    def get_metadata_by_id(self, _id, rowid = False, db = None):
         """ Get image metadata based on the image's id.
 
             Useful for iteraopability with gwern images.
@@ -261,7 +261,7 @@ def create_posts(database):
     """
     database.execute("""CREATE TABLE posts (
 id INTEGER,
-md5 TEXT,
+md5 TEXT UNIQUE,
 file_ext TEXT,
 tag_string TEXT,
 tag_count_general INTEGER,
