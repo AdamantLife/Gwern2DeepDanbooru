@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="Gwern2DeepDanbooru-AdamantLife",
-    version="1.0.0",
+    version="1.0.1",
     author="AdamantLife",
     author_email="contact.adamantmedia@gmail.com",
     description="Automation Utility to reorganize Datasets from Gwern to conform to DeepDanbooru requirements",
