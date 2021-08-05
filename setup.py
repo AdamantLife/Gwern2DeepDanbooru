@@ -4,7 +4,7 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-    name="Gwern2DeepDanbooru-AdamantLife",
+    name="Gwern2DeepDanbooru",
     version="1.0.1",
     author="AdamantLife",
     author_email="contact.adamantmedia@gmail.com",
